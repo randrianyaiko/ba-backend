@@ -13,7 +13,7 @@ jobs:
     environment: bottleartbackendapp
 
     env:
-      # Terraform variables from GitHub secrets
+      # Terraform variables (from GitHub secrets)
       TF_VAR_db_user: ${{ secrets.DB_USER }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_db_host: ${{ secrets.DB_HOST }}
@@ -27,34 +27,37 @@ jobs:
       TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
       TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+      TF_VAR_lambda_function_name: bottleart-backend
+      TF_VAR_s3_bucket_name: bottleart-lambda-layers
+
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
-    
+
     steps:
       # ----------------------------
-      # Checkout code
+      # Checkout repository
       # ----------------------------
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # ----------------------------
-      # Build Lambda layer if dependencies changed
+      # Build Lambda layer
       # ----------------------------
-      - name: Build Layer
+      - name: Build Lambda Layer
         run: chmod +x .deploy/build_layer.sh && ./.deploy/build_layer.sh
 
       # ----------------------------
       # Zip Lambda function code
       # ----------------------------
-      - name: Zip Code
+      - name: Zip Lambda Code
         run: chmod +x .deploy/zip_code.sh && ./.deploy/zip_code.sh
 
       # ----------------------------
       # Setup Terraform
       # ----------------------------
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v2
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.2
 
@@ -63,7 +66,20 @@ jobs:
       # ----------------------------
       - name: Terraform Init
         working-directory: ./terraform
-        run: terraform init
+        run: terraform init -input=false
+
+      # ----------------------------
+      # Import existing resources (safe skip)
+      # ----------------------------
+      - name: Import existing resources if needed
+        working-directory: ./terraform
+        run: |
+          echo "🔍 Checking for existing resources..."
+          terraform import aws_s3_bucket.lambda_layers ${TF_VAR_s3_bucket_name} || echo "✅ S3 bucket already managed or new."
+          terraform import aws_lambda_function.this ${TF_VAR_lambda_function_name} || echo "✅ Lambda already managed or new."
+          terraform import aws_iam_role.lambda_exec ${TF_VAR_lambda_function_name}-exec || echo "✅ IAM Role already managed or new."
+          terraform import aws_sns_topic.this ${TF_VAR_lambda_function_name}-sns || echo "✅ SNS topic already managed or new."
+          terraform import aws_sqs_queue.this ${TF_VAR_lambda_function_name}-queue || echo "✅ SQS queue already managed or new."
 
       # ----------------------------
       # Terraform Validate
@@ -97,7 +113,8 @@ jobs:
       # ----------------------------
       # Clean old Lambda layer ZIPs from S3
       # ----------------------------
-      - name: Clean S3 Layer Bucket
+      - name: Clean old S3 Layer files
         run: |
-          echo "🧹 Removing old Lambda layer zips from $BUCKET_NAME/layers/"
-          aws s3 rm s3://$BUCKET_NAME/layers/ --recursive
+          echo "🧹 Cleaning up old Lambda layer zips from $BUCKET_NAME/layers/"
+          aws s3 rm s3://$BUCKET_NAME/layers/ --recursive || echo "No old layers found to delete."
+
