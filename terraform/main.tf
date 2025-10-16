@@ -1,8 +1,24 @@
 # ----------------------------
-# S3 Bucket for Lambda Layer
+# Random suffix for unique naming
+# ----------------------------
+resource "random_id" "suffix" {
+  byte_length = 2
+}
+
+# ----------------------------
+# S3 Bucket for Lambda Layer (skip if exists)
 # ----------------------------
 resource "aws_s3_bucket" "lambda_layers" {
-  bucket = var.s3_bucket_name
+  bucket = "${var.s3_bucket_name}-${random_id.suffix.hex}"
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+# Optional ACL if needed
+resource "aws_s3_bucket_acl" "lambda_layers_acl" {
+  bucket = aws_s3_bucket.lambda_layers.id
   acl    = "private"
 }
 
@@ -35,10 +51,11 @@ resource "aws_lambda_layer_version" "this" {
 }
 
 # ----------------------------
-# IAM Role for Lambda
+# IAM Role for Lambda (skip if exists)
 # ----------------------------
 resource "aws_iam_role" "lambda_exec" {
-  name = "${var.lambda_function_name}-exec"
+  name = "${var.lambda_function_name}-exec-${random_id.suffix.hex}"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -50,10 +67,10 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 # ----------------------------
-# IAM Policy for Lambda
+# IAM Policy for Lambda (skip if exists)
 # ----------------------------
 resource "aws_iam_policy" "lambda_sns_policy" {
-  name        = "${var.lambda_function_name}-sns-policy"
+  name        = "${var.lambda_function_name}-sns-policy-${random_id.suffix.hex}"
   description = "Allow Lambda to publish to SNS topic"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -155,7 +172,6 @@ resource "aws_apigatewayv2_api" "http_api" {
   protocol_type = "HTTP"
 }
 
-# Lambda integration for HTTP API (AWS_PROXY)
 resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "AWS_PROXY"
@@ -163,21 +179,18 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   payload_format_version = "2.0"
 }
 
-# Catch-all route for /api/{proxy+} for ANY HTTP method
 resource "aws_apigatewayv2_route" "lambda_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "ANY /api/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
 
-# Deploy API Gateway
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http_api.id
   name        = "$default"
   auto_deploy = true
 }
 
-# Allow API Gateway to invoke Lambda
 resource "aws_lambda_permission" "apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
