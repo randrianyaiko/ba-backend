@@ -1,4 +1,4 @@
-name: Deploy AWS Lambda
+name: Deploy AWS Lambda Infra
 
 on:
   push:
@@ -8,12 +8,16 @@ on:
 
 jobs:
   deploy:
-    name: Deploy to AWS
+    name: Deploy Infra & Lambda
     runs-on: ubuntu-latest
-    environment: bottleartbackendapp
+    environment: production
 
     env:
-      # Terraform variables (from GitHub secrets)
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+      # Terraform variables
       TF_VAR_db_user: ${{ secrets.DB_USER }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_db_host: ${{ secrets.DB_HOST }}
@@ -24,97 +28,64 @@ jobs:
       TF_VAR_qdrant_collection_name: ${{ secrets.QDRANT_COLLECTION_NAME }}
       TF_VAR_qdrant_sparse_name: ${{ secrets.QDRANT_SPARSE_NAME }}
       TF_VAR_jwt_secret_key: ${{ secrets.JWT_SECRET_KEY }}
-      TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
+
       TF_VAR_lambda_function_name: bottleart-backend
+      TF_VAR_lambda_handler: main.handler
+      TF_VAR_lambda_runtime: python3.11
+      TF_VAR_lambda_code_path: .deploy/code.zip
+      TF_VAR_lambda_zip_dependency_path: .deploy/layer.zip
       TF_VAR_s3_bucket_name: bottleart-lambda-layers
-      
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: ${{ secrets.AWS_REGION }}
+      TF_VAR_sns_topic_name: bottleart-sns
+      TF_VAR_sqs_queue_name: bottleart-queue
 
     steps:
-      # ----------------------------
-      # Checkout repository
-      # ----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ----------------------------
-      # Build Lambda layer
-      # ----------------------------
-      - name: Build Lambda Layer
-        run: chmod +x .deploy/build_layer.sh && ./.deploy/build_layer.sh
+      - name: Build Lambda layer
+        run: |
+          chmod +x .deploy/build_layer.sh
+          ./.deploy/build_layer.sh
 
-      # ----------------------------
-      # Zip Lambda function code
-      # ----------------------------
-      - name: Zip Lambda Code
-        run: chmod +x .deploy/zip_code.sh && ./.deploy/zip_code.sh
+      - name: Zip Lambda code
+        run: |
+          chmod +x .deploy/zip_code.sh
+          ./.deploy/zip_code.sh
 
-      # ----------------------------
-      # Setup Terraform
-      # ----------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.2
 
-      # ----------------------------
-      # Terraform Init
-      # ----------------------------
-      - name: Terraform Init
-        working-directory: ./terraform
+      - name: Terraform Init (remote state)
+        working-directory: terraform
         run: terraform init -input=false
 
-      # ----------------------------
-      # Import existing resources (safe skip)
-      # ----------------------------
-      - name: Import existing resources if needed
-        working-directory: ./terraform
-        run: |
-          echo "🔍 Checking for existing resources..."
-          terraform import aws_s3_bucket.lambda_layers ${TF_VAR_s3_bucket_name} || echo "✅ S3 bucket already managed or new."
-          terraform import aws_lambda_function.this ${TF_VAR_lambda_function_name} || echo "✅ Lambda already managed or new."
-          terraform import aws_iam_role.lambda_exec ${TF_VAR_lambda_function_name}-exec || echo "✅ IAM Role already managed or new."
-          terraform import aws_sns_topic.this ${TF_VAR_lambda_function_name}-sns || echo "✅ SNS topic already managed or new."
-          terraform import aws_sqs_queue.this ${TF_VAR_lambda_function_name}-queue || echo "✅ SQS queue already managed or new."
-
-      # ----------------------------
-      # Terraform Validate
-      # ----------------------------
-      - name: Validate Terraform configuration
-        working-directory: ./terraform
+      - name: Terraform Validate
+        working-directory: terraform
         run: terraform validate
 
-      # ----------------------------
-      # Terraform Plan
-      # ----------------------------
       - name: Terraform Plan
-        working-directory: ./terraform
+        working-directory: terraform
         run: terraform plan -out=tfplan
 
-      # ----------------------------
-      # Terraform Apply
-      # ----------------------------
       - name: Terraform Apply
-        working-directory: ./terraform
+        working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
-      # ----------------------------
-      # Get Lambda Layer S3 bucket name from Terraform output
-      # ----------------------------
-      - name: Get S3 bucket name from Terraform
-        id: tf_output
-        working-directory: ./terraform
-        run: echo "BUCKET_NAME=$(terraform output -raw lambda_layer_bucket)" >> $GITHUB_ENV
-
-      # ----------------------------
-      # Clean old Lambda layer ZIPs from S3
-      # ----------------------------
-      - name: Clean old S3 Layer files
+      - name: Get Terraform Outputs
+        id: tf_outputs
+        working-directory: terraform
         run: |
-          echo "🧹 Cleaning up old Lambda layer zips from $BUCKET_NAME/layers/"
-          aws s3 rm s3://$BUCKET_NAME/layers/ --recursive || echo "No old layers found to delete."
+          echo "LAYER_BUCKET=$(terraform output -raw lambda_layer_bucket)" >> $GITHUB_ENV
+          echo "API_URL=$(terraform output -raw api_gateway_url)" >> $GITHUB_ENV
 
+      - name: Clean old layer zips in S3
+        run: |
+          echo "🧹 Cleaning old layers in $LAYER_BUCKET"
+          aws s3 rm s3://$LAYER_BUCKET/layers/ --recursive || echo "No old layer files to remove."
+
+      - name: Upload new layer.zip to S3
+        run: |
+          echo "⬆️ Uploading new layer to $LAYER_BUCKET"
+          aws s3 cp .deploy/layer.zip s3://$LAYER_BUCKET/layers/${{ env.TF_VAR_lambda_function_name }}-layer.zip
