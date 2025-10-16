@@ -1,26 +1,4 @@
 # ----------------------------
-# Variables
-# ----------------------------
-variable "lambda_function_name" {}
-variable "lambda_runtime" {}
-variable "lambda_handler" {}
-variable "lambda_zip_dependecy_path" {}
-variable "lambda_code_path" {}
-variable "s3_bucket_name" {}
-variable "db_user" {}
-variable "db_password" {}
-variable "db_host" {}
-variable "db_name" {}
-variable "db_port" {}
-variable "qdrant_collection_name" {}
-variable "qdrant_api_key" {}
-variable "qdrant_url" {}
-variable "qdrant_sparse_name" {}
-variable "jwt_secret_key" {}
-variable "sns_topic_name" {}
-variable "sqs_queue_name" {}
-
-# ----------------------------
 # S3 Bucket for Lambda Layer
 # ----------------------------
 resource "aws_s3_bucket" "lambda_layers" {
