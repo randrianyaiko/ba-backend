@@ -1,0 +1,60 @@
+name: Terraform Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  terraform:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    environment: bottleartbackendapp
+    env:
+      # TF_VAR_* secrets from GitHub repository secrets
+      TF_VAR_db_user: ${{ secrets.DB_USER }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_db_host: ${{ secrets.DB_HOST }}
+      TF_VAR_db_port: ${{ secrets.DB_PORT }}
+      TF_VAR_db_name: ${{ secrets.DB_NAME }}
+      TF_VAR_qdrant_api_key: ${{ secrets.QDRANT_API_KEY }}
+      TF_VAR_qdrant_url: ${{ secrets.QDRANT_URL }}
+      TF_VAR_qdrant_collection_name: ${{ secrets.QDRANT_COLLECTION_NAME }}
+      TF_VAR_qdrant_sparse_name: ${{ secrets.QDRANT_SPARSE_NAME }}
+      TF_VAR_jwt_secret_key: ${{ secrets.JWT_SECRET_KEY }}
+      TF_VAR_aws_sns_topic_arn: ${{ secrets.AWS_SNS_TOPIC_ARN }}
+      TF_VAR_aws_sqs_queue_arn: ${{ secrets.AWS_SQS_QUEUE_ARN }}
+      TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Build Layer
+        run: chmod +x .deploy/build_layer.sh && ./.deploy/build_layer.sh
+
+      - name: Zip Code
+        run: chmod +x .deploy/zip_code.sh && ./.deploy/zip_code.sh
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.2 # Use your required Terraform version
+
+      - name: Initialize Terraform
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Validate Terraform configuration
+        working-directory: ./terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
