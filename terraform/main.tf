@@ -1,22 +1,18 @@
 # ----------------------------
-# Random suffix for unique naming
-# ----------------------------
-resource "random_id" "suffix" {
-  byte_length = 2
-}
-
-# ----------------------------
-# S3 Bucket for Lambda Layer (skip if exists)
+# S3 Bucket for Lambda Layer
 # ----------------------------
 resource "aws_s3_bucket" "lambda_layers" {
-  bucket = "${var.s3_bucket_name}-${random_id.suffix.hex}"
+  bucket = var.s3_bucket_name
 
   lifecycle {
     prevent_destroy = false
   }
+
+  tags = {
+    Name = "lambda-layers"
+  }
 }
 
-# Optional ACL if needed
 resource "aws_s3_bucket_acl" "lambda_layers_acl" {
   bucket = aws_s3_bucket.lambda_layers.id
   acl    = "private"
@@ -26,7 +22,7 @@ resource "aws_s3_bucket_acl" "lambda_layers_acl" {
 # Compute hash of layer zip
 # ----------------------------
 locals {
-  layer_hash = filemd5(var.lambda_zip_dependecy_path)
+  layer_hash = filemd5(var.lambda_zip_dependency_path)
 }
 
 # ----------------------------
@@ -35,7 +31,7 @@ locals {
 resource "aws_s3_object" "lambda_layer_zip" {
   bucket = aws_s3_bucket.lambda_layers.id
   key    = "layers/${var.lambda_function_name}-layer-${local.layer_hash}.zip"
-  source = var.lambda_zip_dependecy_path
+  source = var.lambda_zip_dependency_path
   etag   = local.layer_hash
 }
 
@@ -51,10 +47,10 @@ resource "aws_lambda_layer_version" "this" {
 }
 
 # ----------------------------
-# IAM Role for Lambda (skip if exists)
+# IAM Role for Lambda
 # ----------------------------
 resource "aws_iam_role" "lambda_exec" {
-  name = "${var.lambda_function_name}-exec-${random_id.suffix.hex}"
+  name = "${var.lambda_function_name}-exec"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -67,10 +63,10 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 # ----------------------------
-# IAM Policy for Lambda (skip if exists)
+# IAM Policy for Lambda
 # ----------------------------
 resource "aws_iam_policy" "lambda_sns_policy" {
-  name        = "${var.lambda_function_name}-sns-policy-${random_id.suffix.hex}"
+  name        = "${var.lambda_function_name}-sns-policy"
   description = "Allow Lambda to publish to SNS topic"
   policy = jsonencode({
     Version = "2012-10-17",
@@ -78,7 +74,7 @@ resource "aws_iam_policy" "lambda_sns_policy" {
       { Effect = "Allow", Action = ["sns:Publish"], Resource = aws_sns_topic.this.arn },
       {
         Effect = "Allow",
-        Action = ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"],
+        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
         Resource = "*"
       }
     ]
@@ -91,61 +87,22 @@ resource "aws_iam_role_policy_attachment" "lambda_attach_policy" {
 }
 
 # ----------------------------
-# Lambda Function
-# ----------------------------
-resource "aws_lambda_function" "this" {
-  function_name = var.lambda_function_name
-  role          = aws_iam_role.lambda_exec.arn
-  handler       = var.lambda_handler
-  runtime       = var.lambda_runtime
-  filename      = var.lambda_code_path
-  layers        = [aws_lambda_layer_version.this.arn]
-  depends_on    = [aws_iam_role_policy_attachment.lambda_attach_policy]
-
-  environment {
-    variables = {
-      AWS_SNS_TOPIC_ARN       = aws_sns_topic.this.arn
-      AWS_SQS_QUEUE_ARN       = aws_sqs_queue.this.arn
-      DB_USER                 = var.db_user
-      DB_PASSWORD             = var.db_password
-      DB_HOST                 = var.db_host
-      DB_NAME                 = var.db_name
-      DB_PORT                 = var.db_port
-      QDRANT_COLLECTION_NAME  = var.qdrant_collection_name
-      QDRANT_API_KEY          = var.qdrant_api_key
-      QDRANT_URL              = var.qdrant_url
-      QDRANT_SPARSE_NAME      = var.qdrant_sparse_name
-      JWT_SECRET_KEY          = var.jwt_secret_key
-    }
-  }
-}
-
-# ----------------------------
-# SNS Topic
+# SNS + SQS setup
 # ----------------------------
 resource "aws_sns_topic" "this" {
   name = var.sns_topic_name
 }
 
-# ----------------------------
-# SQS Queue
-# ----------------------------
 resource "aws_sqs_queue" "this" {
   name = var.sqs_queue_name
 }
 
-# ----------------------------
-# SNS Subscription (SQS)
-# ----------------------------
 resource "aws_sns_topic_subscription" "sqs_sub" {
   topic_arn = aws_sns_topic.this.arn
   protocol  = "sqs"
   endpoint  = aws_sqs_queue.this.arn
 }
 
-# ----------------------------
-# SQS Queue Policy (allow SNS)
-# ----------------------------
 resource "aws_sqs_queue_policy" "this" {
   queue_url = aws_sqs_queue.this.id
   policy = jsonencode({
@@ -162,6 +119,36 @@ resource "aws_sqs_queue_policy" "this" {
       }
     ]
   })
+}
+
+# ----------------------------
+# Lambda Function
+# ----------------------------
+resource "aws_lambda_function" "this" {
+  function_name = var.lambda_function_name
+  role          = aws_iam_role.lambda_exec.arn
+  handler       = var.lambda_handler
+  runtime       = var.lambda_runtime
+  filename      = var.lambda_code_path
+  layers        = [aws_lambda_layer_version.this.arn]
+  depends_on    = [aws_iam_role_policy_attachment.lambda_attach_policy]
+
+  environment {
+    variables = {
+      AWS_SNS_TOPIC_ARN      = aws_sns_topic.this.arn
+      AWS_SQS_QUEUE_ARN      = aws_sqs_queue.this.arn
+      DB_USER                = var.db_user
+      DB_PASSWORD            = var.db_password
+      DB_HOST                = var.db_host
+      DB_NAME                = var.db_name
+      DB_PORT                = var.db_port
+      QDRANT_COLLECTION_NAME = var.qdrant_collection_name
+      QDRANT_API_KEY         = var.qdrant_api_key
+      QDRANT_URL             = var.qdrant_url
+      QDRANT_SPARSE_NAME     = var.qdrant_sparse_name
+      JWT_SECRET_KEY         = var.jwt_secret_key
+    }
+  }
 }
 
 # ----------------------------

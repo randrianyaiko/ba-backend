@@ -52,7 +52,7 @@ variable "lambda_code_path" {
   default     = "code.zip"
 }
 
-variable "lambda_zip_dependecy_path" {
+variable "lambda_zip_dependency_path" {
   description = "Path to Lambda Layer zip file"
   type        = string
   default     = "layer.zip"
@@ -61,7 +61,6 @@ variable "lambda_zip_dependecy_path" {
 variable "s3_bucket_name" {
   description = "S3 bucket name"
   type        = string
-  default     = "function-artifacts-deploy26120251016"
 }
 
 variable "qdrant_api_key" {
