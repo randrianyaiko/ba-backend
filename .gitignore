@@ -17,3 +17,4 @@ create_message.sh
 *.tfstate
 *.backup
 *.txt
+!requirements.txt
