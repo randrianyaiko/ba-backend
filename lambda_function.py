@@ -1,4 +1,5 @@
 import os
+import base64
 from dotenv import load_dotenv
 from app import create_app
 from app.database import Base, engine
@@ -50,24 +51,38 @@ def handle_exception(e):
 # -----------------------------
 def preprocess_event(event):
     """
-    Converts an API Gateway v2.0 HTTP API event into a proxy-format event for awsgi.
+    Converts an API Gateway v2.0 HTTP API event into a REST-style proxy event for awsgi.
     """
-    # If it's already a REST proxy event, return as-is
+    # Already REST proxy (API Gateway v1.0)
     if "httpMethod" in event:
         return event
 
-    # Extract HTTP info from HTTP API v2.0 event
+    # HTTP API v2.0
     http_info = event.get("requestContext", {}).get("http", {})
     method = http_info.get("method", "GET")
     path = http_info.get("path", "/")
 
+    # Headers and query parameters
+    headers = event.get("headers") or {}
+    query_params = event.get("queryStringParameters") or {}
+    path_params = event.get("pathParameters") or {}
+
+    # Body handling (decode if Base64)
+    body = event.get("body")
+    if body and event.get("isBase64Encoded", False):
+        try:
+            body = base64.b64decode(body).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to decode Base64 body: {e}")
+            body = None
+
     return {
         "httpMethod": method,
         "path": path,
-        "headers": event.get("headers", {}),
-        "queryStringParameters": event.get("queryStringParameters", {}),
-        "body": event.get("body", None),
-        "isBase64Encoded": event.get("isBase64Encoded", False),
+        "headers": headers,
+        "queryStringParameters": query_params,
+        "body": body,
+        "isBase64Encoded": False,
         "requestContext": {
             "identity": {
                 "sourceIp": http_info.get("sourceIp", ""),
@@ -75,8 +90,8 @@ def preprocess_event(event):
             }
         },
         "resource": path,
-        "pathParameters": event.get("pathParameters", {}),
-        "stageVariables": event.get("stageVariables", {})
+        "pathParameters": path_params,
+        "stageVariables": event.get("stageVariables") or {}
     }
 
 # -----------------------------
@@ -85,11 +100,12 @@ def preprocess_event(event):
 def lambda_handler(event, context):
     try:
         processed_event = preprocess_event(event)
-        return awsgi.response(app, processed_event, context)
+        response = awsgi.response(app, processed_event, context)
+        return response
     except Exception as e:
         logger.exception("Error in Lambda handler:")
         return {
             "statusCode": 500,
-            "body": f"Internal Server Error, {e}",
+            "body": f"Internal Server Error: {str(e)}",
             "headers": {"Content-Type": "text/plain"}
         }

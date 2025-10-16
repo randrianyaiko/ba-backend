@@ -3,7 +3,7 @@ name: Terraform Deploy
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -27,13 +27,29 @@ jobs:
       TF_VAR_aws_sqs_queue_arn: ${{ secrets.AWS_SQS_QUEUE_ARN }}
       TF_VAR_aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
       TF_VAR_aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-      
-      - name: Build Layer
+        with:
+          fetch-depth: 0  # Ensure full history to detect changes
+
+      - name: Build Layer (only if requirements.txt changed)
+        if: ${{ steps.check_requirements.outputs.changed == 'true' }}
         run: chmod +x .deploy/build_layer.sh && ./.deploy/build_layer.sh
+
+      - name: Check if requirements.txt changed
+        id: check_requirements
+        run: |
+          git fetch origin main
+          CHANGED=$(git diff --name-only origin/main HEAD | grep -E '^requirements\.txt$' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "requirements.txt changed"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "requirements.txt not changed"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Zip Code
         run: chmod +x .deploy/zip_code.sh && ./.deploy/zip_code.sh
@@ -41,7 +57,7 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.6.2 # Use your required Terraform version
+          terraform_version: 1.6.2
 
       - name: Initialize Terraform
         working-directory: ./terraform
