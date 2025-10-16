@@ -13,6 +13,7 @@ jobs:
     environment: production
 
     env:
+      # AWS credentials for Terraform + AWS CLI
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -39,40 +40,71 @@ jobs:
       TF_VAR_sqs_queue_name: bottleart-queue
 
     steps:
+      # ----------------------------
+      # Checkout repository
+      # ----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ----------------------------
+      # Build Lambda layer
+      # ----------------------------
       - name: Build Lambda layer
         run: |
           chmod +x .deploy/build_layer.sh
           ./.deploy/build_layer.sh
 
+      # ----------------------------
+      # Zip Lambda code
+      # ----------------------------
       - name: Zip Lambda code
         run: |
           chmod +x .deploy/zip_code.sh
           ./.deploy/zip_code.sh
 
+      # ----------------------------
+      # Setup Terraform
+      # ----------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.2
 
+      # ----------------------------
+      # Terraform Init
+      # ----------------------------
       - name: Terraform Init (remote state)
         working-directory: terraform
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: terraform init -input=false
 
+      # ----------------------------
+      # Terraform Validate
+      # ----------------------------
       - name: Terraform Validate
         working-directory: terraform
         run: terraform validate
 
+      # ----------------------------
+      # Terraform Plan
+      # ----------------------------
       - name: Terraform Plan
         working-directory: terraform
         run: terraform plan -out=tfplan
 
+      # ----------------------------
+      # Terraform Apply
+      # ----------------------------
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
+      # ----------------------------
+      # Get Terraform Outputs
+      # ----------------------------
       - name: Get Terraform Outputs
         id: tf_outputs
         working-directory: terraform
@@ -80,11 +112,17 @@ jobs:
           echo "LAYER_BUCKET=$(terraform output -raw lambda_layer_bucket)" >> $GITHUB_ENV
           echo "API_URL=$(terraform output -raw api_gateway_url)" >> $GITHUB_ENV
 
-      - name: Clean old layer zips in S3
+      # ----------------------------
+      # Clean old Lambda layer ZIPs in S3
+      # ----------------------------
+      - name: Clean old layer zips
         run: |
           echo "🧹 Cleaning old layers in $LAYER_BUCKET"
           aws s3 rm s3://$LAYER_BUCKET/layers/ --recursive || echo "No old layer files to remove."
 
+      # ----------------------------
+      # Upload new layer ZIP
+      # ----------------------------
       - name: Upload new layer.zip to S3
         run: |
           echo "⬆️ Uploading new layer to $LAYER_BUCKET"
