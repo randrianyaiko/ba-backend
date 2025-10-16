@@ -24,9 +24,9 @@ jobs:
       TF_VAR_qdrant_collection_name: ${{ secrets.QDRANT_COLLECTION_NAME }}
       TF_VAR_qdrant_sparse_name: ${{ secrets.QDRANT_SPARSE_NAME }}
       TF_VAR_jwt_secret_key: ${{ secrets.JWT_SECRET_KEY }}
-      TF_VAR_AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      TF_VAR_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      TF_VAR_AWS_REGION: ${{ secrets.AWS_REGION }}
+      TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
