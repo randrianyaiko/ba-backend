@@ -41,8 +41,8 @@ jobs:
       - name: Check if requirements.txt changed
         id: check_requirements
         run: |
-          git fetch origin main
-          CHANGED=$(git diff --name-only origin/main HEAD | grep -E '^requirements\.txt$' || true)
+          git fetch origin master
+          CHANGED=$(git diff --name-only origin/master HEAD | grep -E '^requirements\.txt$' || true)
           if [ -n "$CHANGED" ]; then
             echo "requirements.txt changed"
             echo "changed=true" >> $GITHUB_OUTPUT
