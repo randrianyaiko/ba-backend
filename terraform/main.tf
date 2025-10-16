@@ -1,4 +1,26 @@
 # ----------------------------
+# Variables
+# ----------------------------
+variable "lambda_function_name" {}
+variable "lambda_runtime" {}
+variable "lambda_handler" {}
+variable "lambda_zip_dependecy_path" {}
+variable "lambda_code_path" {}
+variable "s3_bucket_name" {}
+variable "db_user" {}
+variable "db_password" {}
+variable "db_host" {}
+variable "db_name" {}
+variable "db_port" {}
+variable "qdrant_collection_name" {}
+variable "qdrant_api_key" {}
+variable "qdrant_url" {}
+variable "qdrant_sparse_name" {}
+variable "jwt_secret_key" {}
+variable "sns_topic_name" {}
+variable "sqs_queue_name" {}
+
+# ----------------------------
 # S3 Bucket for Lambda Layer
 # ----------------------------
 resource "aws_s3_bucket" "lambda_layers" {
@@ -7,13 +29,20 @@ resource "aws_s3_bucket" "lambda_layers" {
 }
 
 # ----------------------------
+# Compute hash of layer zip
+# ----------------------------
+locals {
+  layer_hash = filemd5(var.lambda_zip_dependecy_path)
+}
+
+# ----------------------------
 # S3 Object for Lambda Layer ZIP
 # ----------------------------
 resource "aws_s3_object" "lambda_layer_zip" {
   bucket = aws_s3_bucket.lambda_layers.id
-  key    = "layers/${var.lambda_function_name}-layer.zip"
-  source = var.lambda_zip_dependecy_path  # Assuming layer zip is the same path; adjust if needed
-  etag   = filemd5(var.lambda_zip_dependecy_path)
+  key    = "layers/${var.lambda_function_name}-layer-${local.layer_hash}.zip"
+  source = var.lambda_zip_dependecy_path
+  etag   = local.layer_hash
 }
 
 # ----------------------------
@@ -141,37 +170,36 @@ resource "aws_sqs_queue_policy" "this" {
 }
 
 # ----------------------------
-# API Gateway HTTP API
+# API Gateway V2 HTTP API
 # ----------------------------
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "${var.lambda_function_name}-api"
   protocol_type = "HTTP"
 }
 
-# Integration
+# Lambda integration for HTTP API (AWS_PROXY)
 resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id                 = aws_apigatewayv2_api.http_api.id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.this.invoke_arn
-  integration_method     = "ANY"
   payload_format_version = "2.0"
 }
 
-# Route
+# Catch-all route for /api/{proxy+} for ANY HTTP method
 resource "aws_apigatewayv2_route" "lambda_route" {
   api_id    = aws_apigatewayv2_api.http_api.id
   route_key = "ANY /api/{proxy+}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
 
-# Stage
+# Deploy API Gateway
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http_api.id
   name        = "$default"
   auto_deploy = true
 }
 
-# Lambda Permission for API Gateway
+# Allow API Gateway to invoke Lambda
 resource "aws_lambda_permission" "apigw_invoke" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
