@@ -31,25 +31,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0  # Ensure full history to detect changes
 
-      - name: Build Layer (only if requirements.txt changed)
-        if: ${{ steps.check_requirements.outputs.changed == 'true' }}
+      - name: Build Layer
         run: chmod +x .deploy/build_layer.sh && ./.deploy/build_layer.sh
-
-      - name: Check if requirements.txt changed
-        id: check_requirements
-        run: |
-          git fetch origin master
-          CHANGED=$(git diff --name-only origin/master HEAD | grep -E '^requirements\.txt$' || true)
-          if [ -n "$CHANGED" ]; then
-            echo "requirements.txt changed"
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "requirements.txt not changed"
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: Zip Code
         run: chmod +x .deploy/zip_code.sh && ./.deploy/zip_code.sh
