@@ -8,42 +8,7 @@ resource "aws_s3_bucket" "lambda_layers" {
     prevent_destroy = false
   }
 
-  tags = {
-    Name = "lambda-layers"
-  }
-}
-
-resource "aws_s3_bucket_acl" "lambda_layers_acl" {
-  bucket = aws_s3_bucket.lambda_layers.id
-  acl    = "private"
-}
-
-# ----------------------------
-# Compute hash of dependencies (for layer versioning)
-# ----------------------------
-locals {
-  layer_hash = filemd5("${path.module}/../requirements.txt")
-}
-
-# ----------------------------
-# Lambda Layer S3 Object
-# ----------------------------
-resource "aws_s3_object" "lambda_layer_zip" {
-  bucket = aws_s3_bucket.lambda_layers.id
-  key    = "layers/${var.lambda_function_name}-layer-${local.layer_hash}.zip"
-  source = var.lambda_zip_dependency_path
-  etag   = local.layer_hash
-}
-
-# ----------------------------
-# Lambda Layer Version
-# ----------------------------
-resource "aws_lambda_layer_version" "this" {
-  layer_name          = "${var.lambda_function_name}-layer"
-  s3_bucket           = aws_s3_bucket.lambda_layers.id
-  s3_key              = aws_s3_object.lambda_layer_zip.key
-  compatible_runtimes = [var.lambda_runtime]
-  description         = "Shared libraries for ${var.lambda_function_name}"
+  tags = { Name = "lambda-layers" }
 }
 
 # ----------------------------
@@ -67,16 +32,12 @@ resource "aws_iam_role" "lambda_exec" {
 # ----------------------------
 resource "aws_iam_policy" "lambda_sns_policy" {
   name        = "${var.lambda_function_name}-sns-policy"
-  description = "Allow Lambda to publish to SNS topic"
+  description = "Allow Lambda to publish to SNS topic and write logs"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      { Effect = "Allow", Action = ["sns:Publish"], Resource = aws_sns_topic.this.arn },
-      {
-        Effect = "Allow",
-        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-        Resource = "*"
-      }
+      { Effect = "Allow", Action = ["sns:Publish"], Resource = "*" },
+      { Effect = "Allow", Action = ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"], Resource = "*" }
     ]
   })
 }
@@ -84,6 +45,16 @@ resource "aws_iam_policy" "lambda_sns_policy" {
 resource "aws_iam_role_policy_attachment" "lambda_attach_policy" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = aws_iam_policy.lambda_sns_policy.arn
+}
+
+# ----------------------------
+# Lambda Function Skeleton (Python3.10)
+# ----------------------------
+resource "aws_lambda_function" "this" {
+  function_name = var.lambda_function_name
+  role          = aws_iam_role.lambda_exec.arn
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.10"
 }
 
 # ----------------------------
@@ -113,48 +84,10 @@ resource "aws_sqs_queue_policy" "this" {
         Principal = "*",
         Action    = "sqs:SendMessage",
         Resource  = aws_sqs_queue.this.arn,
-        Condition = {
-          ArnEquals = { "aws:SourceArn" = aws_sns_topic.this.arn }
-        }
+        Condition = { ArnEquals = { "aws:SourceArn" = aws_sns_topic.this.arn } }
       }
     ]
   })
-}
-
-# ----------------------------
-# Lambda Function (S3 code, versioned)
-# ----------------------------
-resource "aws_lambda_function" "this" {
-  function_name = var.lambda_function_name
-  role          = aws_iam_role.lambda_exec.arn
-  handler       = var.lambda_handler
-  runtime       = var.lambda_runtime
-  layers        = [aws_lambda_layer_version.this.arn]
-
-  # S3-based deployment artifact
-  s3_bucket = var.lambda_code_s3_bucket
-  s3_key    = var.lambda_code_s3_key
-  publish   = true
-
-  # Optional versioning for tracking deployments
-  description = "Deployed via Terraform + GitHub Actions version ${var.lambda_code_version}"
-
-  environment {
-    variables = {
-      AWS_SNS_TOPIC_ARN      = aws_sns_topic.this.arn
-      AWS_SQS_QUEUE_ARN      = aws_sqs_queue.this.arn
-      DB_USER                = var.db_user
-      DB_PASSWORD            = var.db_password
-      DB_HOST                = var.db_host
-      DB_NAME                = var.db_name
-      DB_PORT                = var.db_port
-      QDRANT_COLLECTION_NAME = var.qdrant_collection_name
-      QDRANT_API_KEY         = var.qdrant_api_key
-      QDRANT_URL             = var.qdrant_url
-      QDRANT_SPARSE_NAME     = var.qdrant_sparse_name
-      JWT_SECRET_KEY         = var.jwt_secret_key
-    }
-  }
 }
 
 # ----------------------------

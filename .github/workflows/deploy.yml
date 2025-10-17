@@ -1,4 +1,4 @@
-name: Deploy AWS Lambda Infra
+name: Deploy AWS Lambda Infra & Code
 
 on:
   push:
@@ -16,47 +16,27 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
 
-      TF_VAR_db_user: ${{ secrets.DB_USER }}
-      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
-      TF_VAR_db_host: ${{ secrets.DB_HOST }}
-      TF_VAR_db_port: ${{ secrets.DB_PORT }}
-      TF_VAR_db_name: ${{ secrets.DB_NAME }}
-      TF_VAR_qdrant_api_key: ${{ secrets.QDRANT_API_KEY }}
-      TF_VAR_qdrant_url: ${{ secrets.QDRANT_URL }}
-      TF_VAR_qdrant_collection_name: ${{ secrets.QDRANT_COLLECTION_NAME }}
-      TF_VAR_qdrant_sparse_name: ${{ secrets.QDRANT_SPARSE_NAME }}
-      TF_VAR_jwt_secret_key: ${{ secrets.JWT_SECRET_KEY }}
-
+      TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
       TF_VAR_lambda_function_name: bottleart-backend
       TF_VAR_lambda_handler: main.handler
-      TF_VAR_lambda_runtime: python3.11
-      TF_VAR_lambda_zip_dependency_path: .deploy/layer.zip
       TF_VAR_s3_bucket_name: bottleart-lambda-layers
       TF_VAR_sns_topic_name: bottleart-sns
       TF_VAR_sqs_queue_name: bottleart-queue
 
     steps:
       # ----------------------------
-      # Checkout repository
+      # Checkout repo
       # ----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # ----------------------------
-      # Build Lambda layer
+      # Setup Python 3.10
       # ----------------------------
-      - name: Build Lambda layer
-        run: |
-          chmod +x .deploy/build_layer.sh
-          ./.deploy/build_layer.sh
-
-      # ----------------------------
-      # Zip Lambda code
-      # ----------------------------
-      - name: Zip Lambda code
-        run: |
-          chmod +x .deploy/zip_code.sh
-          ./.deploy/zip_code.sh
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
 
       # ----------------------------
       # Setup Terraform
@@ -66,75 +46,111 @@ jobs:
         with:
           terraform_version: 1.6.2
 
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init -input=false
-
-      - name: Terraform Validate
-        working-directory: terraform
-        run: terraform validate
-
       # ----------------------------
-      # Terraform Apply (Infrastructure)
+      # Terraform Apply (Infra Only)
       # ----------------------------
-      - name: Terraform Apply (Infrastructure)
+      - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
 
       # ----------------------------
-      # Upload Lambda code to S3
+      # Check if requirements.txt changed
       # ----------------------------
-      - name: Upload Lambda code to S3
+      - name: Check if requirements.txt changed
+        id: layer_check
         run: |
-          VERSION="v$(date +%Y%m%d%H%M%S)"
-          ZIP_PATH=".deploy/code.zip"
-          S3_KEY="lambda/${{ env.TF_VAR_lambda_function_name }}-${VERSION}.zip"
-
-          echo "Uploading Lambda code to s3://${{ env.TF_VAR_s3_bucket_name }}/${S3_KEY}"
-          aws s3 cp "$ZIP_PATH" "s3://${{ env.TF_VAR_s3_bucket_name }}/${S3_KEY}"
-
-          echo "TF_VAR_lambda_code_s3_bucket=${{ env.TF_VAR_s3_bucket_name }}" >> $GITHUB_ENV
-          echo "TF_VAR_lambda_code_s3_key=${S3_KEY}" >> $GITHUB_ENV
-          echo "TF_VAR_lambda_code_version=${VERSION}" >> $GITHUB_ENV
+          CHANGED_FILES=$(git diff --name-only ${{ github.sha }} ${{ github.sha }}^)
+          echo "Changed files: $CHANGED_FILES"
+          if echo "$CHANGED_FILES" | grep -q "requirements.txt"; then
+            echo "layer_changed=true" >> $GITHUB_ENV
+          else
+            echo "layer_changed=false" >> $GITHUB_ENV
 
       # ----------------------------
-      # Update Lambda Function Code
+      # Build Lambda Layer (if needed)
+      # ----------------------------
+      - name: Build Lambda Layer
+        if: env.layer_changed == 'true'
+        run: |
+          chmod +x .deploy/build_layer.sh
+          ./.deploy/build_layer.sh
+
+      # ----------------------------
+      # Publish Lambda Layer (if changed) and cleanup
+      # ----------------------------
+      - name: Publish Lambda Layer
+        if: env.layer_changed == 'true'
+        run: |
+          LAYER_ZIP=".deploy/layer.zip"
+          LAYER_NAME=${{ env.TF_VAR_lambda_function_name }}-layer
+          LAYER_ARN=$(aws lambda publish-layer-version \
+            --layer-name $LAYER_NAME \
+            --zip-file fileb://$LAYER_ZIP \
+            --compatible-runtimes python3.10 \
+            --query LayerVersionArn --output text)
+          echo "LAYER_ARN=$LAYER_ARN" >> $GITHUB_ENV
+
+          # Attach new layer to Lambda
+          aws lambda update-function-configuration \
+            --function-name ${{ env.TF_VAR_lambda_function_name }} \
+            --layers $LAYER_ARN \
+            --environment "Variables={
+              DB_USER=${{ secrets.DB_USER }},
+              DB_PASSWORD=${{ secrets.DB_PASSWORD }},
+              DB_HOST=${{ secrets.DB_HOST }},
+              DB_PORT=${{ secrets.DB_PORT }},
+              DB_NAME=${{ secrets.DB_NAME }},
+              QDRANT_COLLECTION_NAME=${{ secrets.QDRANT_COLLECTION_NAME }},
+              QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }},
+              QDRANT_URL=${{ secrets.QDRANT_URL }},
+              QDRANT_SPARSE_NAME=${{ secrets.QDRANT_SPARSE_NAME }},
+              JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},
+              AWS_SNS_TOPIC_ARN=${{ secrets.AWS_SNS_TOPIC_ARN }},
+              AWS_SQS_QUEUE_ARN=${{ secrets.AWS_SQS_QUEUE_ARN }}
+            }"
+
+          # Cleanup local layer zip
+          rm -f $LAYER_ZIP
+
+      # ----------------------------
+      # Zip Lambda Code
+      # ----------------------------
+      - name: Zip Lambda Code
+        run: |
+          chmod +x .deploy/zip_code.sh
+          ./.deploy/zip_code.sh
+
+      # ----------------------------
+      # Update Lambda Function Code (direct upload)
       # ----------------------------
       - name: Update Lambda Function Code
-        working-directory: terraform
         run: |
-          terraform apply -auto-approve \
-            -var="lambda_code_s3_bucket=${TF_VAR_lambda_code_s3_bucket}" \
-            -var="lambda_code_s3_key=${TF_VAR_lambda_code_s3_key}" \
-            -var="lambda_code_version=${TF_VAR_lambda_code_version}"
+          aws lambda update-function-code \
+            --function-name ${{ env.TF_VAR_lambda_function_name }} \
+            --zip-file fileb://.deploy/code.zip \
+            --publish
 
       # ----------------------------
-      # Clean up old Lambda layers (keep last 5)
+      # Update Lambda environment variables even if layer didn't change
       # ----------------------------
-      - name: Clean up old Lambda layer ZIPs
+      - name: Update Lambda Environment Variables
         run: |
-          BUCKET=${{ env.TF_VAR_s3_bucket_name }}
-          PREFIX="layers/${{ env.TF_VAR_lambda_function_name }}-layer-"
-
-          echo "Cleaning old Lambda layer files in s3://$BUCKET/$PREFIX"
-          
-          # List layer files sorted by LastModified descending
-          LAYER_KEYS=$(aws s3api list-objects-v2 \
-            --bucket $BUCKET \
-            --prefix "layers/" \
-            --query "sort_by(Contents,&LastModified)[].Key" \
-            --output text)
-
-          # Keep only the latest 5 files
-          COUNT=0
-          for KEY in $LAYER_KEYS; do
-            COUNT=$((COUNT+1))
-            if [ $COUNT -le $(($# < 5 ? $# : 5)) ]; then
-              continue
-            fi
-            echo "Deleting old layer: $KEY"
-            aws s3 rm "s3://$BUCKET/$KEY"
-          done
+          aws lambda update-function-configuration \
+            --function-name ${{ env.TF_VAR_lambda_function_name }} \
+            --environment "Variables={
+              DB_USER=${{ secrets.DB_USER }},
+              DB_PASSWORD=${{ secrets.DB_PASSWORD }},
+              DB_HOST=${{ secrets.DB_HOST }},
+              DB_PORT=${{ secrets.DB_PORT }},
+              DB_NAME=${{ secrets.DB_NAME }},
+              QDRANT_COLLECTION_NAME=${{ secrets.QDRANT_COLLECTION_NAME }},
+              QDRANT_API_KEY=${{ secrets.QDRANT_API_KEY }},
+              QDRANT_URL=${{ secrets.QDRANT_URL }},
+              QDRANT_SPARSE_NAME=${{ secrets.QDRANT_SPARSE_NAME }},
+              JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }},
+              AWS_SNS_TOPIC_ARN=${{ secrets.AWS_SNS_TOPIC_ARN }},
+              AWS_SQS_QUEUE_ARN=${{ secrets.AWS_SQS_QUEUE_ARN }}
+            }"
 
       # ----------------------------
       # Show API Gateway URL
