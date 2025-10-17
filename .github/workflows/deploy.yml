@@ -40,7 +40,17 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+            # ----------------------------
+      # Zip Lambda Code
+      # ----------------------------
+      - name: Zip Lambda Code
+        run: |
+          chmod +x .deploy/zip_code.sh
+          ./.deploy/zip_code.sh
 
+      # ----------------------------
+      # Update Lambda Function Code (direct upload)
+      # ----------------------------
       # ----------------------------
       # Setup Terraform
       # ----------------------------
@@ -129,17 +139,6 @@ jobs:
           # Cleanup local layer zip
           rm -f $LAYER_ZIP
 
-      # ----------------------------
-      # Zip Lambda Code
-      # ----------------------------
-      - name: Zip Lambda Code
-        run: |
-          chmod +x .deploy/zip_code.sh
-          ./.deploy/zip_code.sh
-
-      # ----------------------------
-      # Update Lambda Function Code (direct upload)
-      # ----------------------------
       - name: Update Lambda Function Code
         run: |
           aws lambda update-function-code \
