@@ -12,22 +12,23 @@ jobs:
     environment: production
 
     env:
+      # AWS credentials
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
 
+      # Terraform variables
       TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
       TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       TF_VAR_aws_region: ${{ secrets.AWS_REGION }}
       TF_VAR_lambda_function_name: bottleart-backend
-      TF_VAR_lambda_handler: main.handler
       TF_VAR_s3_bucket_name: bottleart-lambda-layers
       TF_VAR_sns_topic_name: bottleart-sns
       TF_VAR_sqs_queue_name: bottleart-queue
 
     steps:
       # ----------------------------
-      # Checkout repo
+      # Checkout repository
       # ----------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,7 +93,7 @@ jobs:
             --query LayerVersionArn --output text)
           echo "LAYER_ARN=$LAYER_ARN" >> $GITHUB_ENV
 
-          # Attach new layer to Lambda
+          # Attach new layer to Lambda and update env variables
           aws lambda update-function-configuration \
             --function-name ${{ env.TF_VAR_lambda_function_name }} \
             --layers $LAYER_ARN \
@@ -133,7 +134,7 @@ jobs:
             --publish
 
       # ----------------------------
-      # Update Lambda environment variables even if layer didn't change
+      # Update Lambda Environment Variables (always)
       # ----------------------------
       - name: Update Lambda Environment Variables
         run: |
