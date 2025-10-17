@@ -8,17 +8,14 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Infra & Lambda
     runs-on: ubuntu-latest
     environment: production
 
     env:
-      # AWS credentials for Terraform + AWS CLI
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
 
-      # Terraform variables
       TF_VAR_db_user: ${{ secrets.DB_USER }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_db_host: ${{ secrets.DB_HOST }}
@@ -33,7 +30,6 @@ jobs:
       TF_VAR_lambda_function_name: bottleart-backend
       TF_VAR_lambda_handler: main.handler
       TF_VAR_lambda_runtime: python3.11
-      TF_VAR_lambda_code_path: .deploy/code.zip
       TF_VAR_lambda_zip_dependency_path: .deploy/layer.zip
       TF_VAR_s3_bucket_name: bottleart-lambda-layers
       TF_VAR_sns_topic_name: bottleart-sns
@@ -70,60 +66,80 @@ jobs:
         with:
           terraform_version: 1.6.2
 
-      # ----------------------------
-      # Terraform Init
-      # ----------------------------
-      - name: Terraform Init (remote state)
+      - name: Terraform Init
         working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: terraform init -input=false
 
-      # ----------------------------
-      # Terraform Validate
-      # ----------------------------
       - name: Terraform Validate
         working-directory: terraform
         run: terraform validate
 
       # ----------------------------
-      # Terraform Plan
+      # Terraform Apply (Infrastructure)
       # ----------------------------
-      - name: Terraform Plan
+      - name: Terraform Apply (Infrastructure)
         working-directory: terraform
-        run: terraform plan -out=tfplan
+        run: terraform apply -auto-approve
 
       # ----------------------------
-      # Terraform Apply
+      # Upload Lambda code to S3
       # ----------------------------
-      - name: Terraform Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+      - name: Upload Lambda code to S3
+        run: |
+          VERSION="v$(date +%Y%m%d%H%M%S)"
+          ZIP_PATH=".deploy/code.zip"
+          S3_KEY="lambda/${{ env.TF_VAR_lambda_function_name }}-${VERSION}.zip"
+
+          echo "Uploading Lambda code to s3://${{ env.TF_VAR_s3_bucket_name }}/${S3_KEY}"
+          aws s3 cp "$ZIP_PATH" "s3://${{ env.TF_VAR_s3_bucket_name }}/${S3_KEY}"
+
+          echo "TF_VAR_lambda_code_s3_bucket=${{ env.TF_VAR_s3_bucket_name }}" >> $GITHUB_ENV
+          echo "TF_VAR_lambda_code_s3_key=${S3_KEY}" >> $GITHUB_ENV
+          echo "TF_VAR_lambda_code_version=${VERSION}" >> $GITHUB_ENV
 
       # ----------------------------
-      # Get Terraform Outputs
+      # Update Lambda Function Code
       # ----------------------------
-      - name: Get Terraform Outputs
-        id: tf_outputs
+      - name: Update Lambda Function Code
         working-directory: terraform
         run: |
-          echo "LAYER_BUCKET=$(terraform output -raw lambda_layer_bucket)" >> $GITHUB_ENV
-          echo "API_URL=$(terraform output -raw api_gateway_url)" >> $GITHUB_ENV
+          terraform apply -auto-approve \
+            -var="lambda_code_s3_bucket=${TF_VAR_lambda_code_s3_bucket}" \
+            -var="lambda_code_s3_key=${TF_VAR_lambda_code_s3_key}" \
+            -var="lambda_code_version=${TF_VAR_lambda_code_version}"
 
       # ----------------------------
-      # Clean old Lambda layer ZIPs in S3
+      # Clean up old Lambda layers (keep last 5)
       # ----------------------------
-      - name: Clean old layer zips
+      - name: Clean up old Lambda layer ZIPs
         run: |
-          echo "🧹 Cleaning old layers in $LAYER_BUCKET"
-          aws s3 rm s3://$LAYER_BUCKET/layers/ --recursive || echo "No old layer files to remove."
+          BUCKET=${{ env.TF_VAR_s3_bucket_name }}
+          PREFIX="layers/${{ env.TF_VAR_lambda_function_name }}-layer-"
+
+          echo "Cleaning old Lambda layer files in s3://$BUCKET/$PREFIX"
+          
+          # List layer files sorted by LastModified descending
+          LAYER_KEYS=$(aws s3api list-objects-v2 \
+            --bucket $BUCKET \
+            --prefix "layers/" \
+            --query "sort_by(Contents,&LastModified)[].Key" \
+            --output text)
+
+          # Keep only the latest 5 files
+          COUNT=0
+          for KEY in $LAYER_KEYS; do
+            COUNT=$((COUNT+1))
+            if [ $COUNT -le $(($# < 5 ? $# : 5)) ]; then
+              continue
+            fi
+            echo "Deleting old layer: $KEY"
+            aws s3 rm "s3://$BUCKET/$KEY"
+          done
 
       # ----------------------------
-      # Upload new layer ZIP
+      # Show API Gateway URL
       # ----------------------------
-      - name: Upload new layer.zip to S3
+      - name: Show API Gateway URL
         run: |
-          echo "⬆️ Uploading new layer to $LAYER_BUCKET"
-          aws s3 cp .deploy/layer.zip s3://$LAYER_BUCKET/layers/${{ env.TF_VAR_lambda_function_name }}-layer.zip
+          API_URL=$(terraform output -raw api_gateway_url)
+          echo "✅ Deployment complete! API URL: $API_URL"

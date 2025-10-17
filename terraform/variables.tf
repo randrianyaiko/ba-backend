@@ -121,3 +121,18 @@ variable "jwt_secret_key" {
   type        = string
   sensitive   = true
 }
+
+variable "lambda_code_s3_bucket" {
+  description = "S3 bucket name"
+  type        = string
+}
+
+variable "lambda_code_s3_key" {
+  description = "S3 key"
+  type        = string
+}
+
+variable "lambda_code_version" {
+  description = "S3 version"
+  type        = string
+}

@@ -1,5 +1,5 @@
 # ----------------------------
-# S3 Bucket for Lambda Layer
+# S3 Bucket for Lambda Layers
 # ----------------------------
 resource "aws_s3_bucket" "lambda_layers" {
   bucket = var.s3_bucket_name
@@ -19,14 +19,14 @@ resource "aws_s3_bucket_acl" "lambda_layers_acl" {
 }
 
 # ----------------------------
-# Compute hash of layer zip
+# Compute hash of dependencies (for layer versioning)
 # ----------------------------
 locals {
-  layer_hash = filemd5(var.lambda_zip_dependency_path)
+  layer_hash = filemd5("${path.module}/../requirements.txt")
 }
 
 # ----------------------------
-# S3 Object for Lambda Layer ZIP
+# Lambda Layer S3 Object
 # ----------------------------
 resource "aws_s3_object" "lambda_layer_zip" {
   bucket = aws_s3_bucket.lambda_layers.id
@@ -36,7 +36,7 @@ resource "aws_s3_object" "lambda_layer_zip" {
 }
 
 # ----------------------------
-# Lambda Layer from S3
+# Lambda Layer Version
 # ----------------------------
 resource "aws_lambda_layer_version" "this" {
   layer_name          = "${var.lambda_function_name}-layer"
@@ -122,16 +122,22 @@ resource "aws_sqs_queue_policy" "this" {
 }
 
 # ----------------------------
-# Lambda Function
+# Lambda Function (S3 code, versioned)
 # ----------------------------
 resource "aws_lambda_function" "this" {
   function_name = var.lambda_function_name
   role          = aws_iam_role.lambda_exec.arn
   handler       = var.lambda_handler
   runtime       = var.lambda_runtime
-  filename      = var.lambda_code_path
   layers        = [aws_lambda_layer_version.this.arn]
-  depends_on    = [aws_iam_role_policy_attachment.lambda_attach_policy]
+
+  # S3-based deployment artifact
+  s3_bucket = var.lambda_code_s3_bucket
+  s3_key    = var.lambda_code_s3_key
+  publish   = true
+
+  # Optional versioning for tracking deployments
+  description = "Deployed via Terraform + GitHub Actions version ${var.lambda_code_version}"
 
   environment {
     variables = {
