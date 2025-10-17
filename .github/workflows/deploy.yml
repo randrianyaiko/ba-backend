@@ -52,14 +52,14 @@ jobs:
       # ----------------------------
       # Terraform Initialisation (Infra Only)
       # ----------------------------
-      - name: Terraform Apply
+      - name: Terraform Init
         working-directory: terraform
         run: terraform init
 
       # ----------------------------
       # Terraform Plan (Infra Only)
       # ----------------------------
-      - name: Terraform Apply
+      - name: Terraform Plan
         working-directory: terraform
         run: terraform plan
 

@@ -55,7 +55,6 @@ resource "aws_lambda_function" "this" {
   role          = aws_iam_role.lambda_exec.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.10"
-
   # Provide a minimal empty ZIP to satisfy Terraform
 #  filename      = "empty_lambda.zip" # create a small empty zip locally
   publish       = false
