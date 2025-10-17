@@ -50,6 +50,20 @@ jobs:
           terraform_version: 1.6.2
 
       # ----------------------------
+      # Terraform Initialisation (Infra Only)
+      # ----------------------------
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform init
+
+      # ----------------------------
+      # Terraform Plan (Infra Only)
+      # ----------------------------
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform plan
+
+      # ----------------------------
       # Terraform Apply (Infra Only)
       # ----------------------------
       - name: Terraform Apply
